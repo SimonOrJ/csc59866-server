@@ -30,10 +30,14 @@ Server: csc59866/group1\r\n\
 Date: %s\r\n\
 Connection: keep-alive\r\n\
 ";
+char contentTemplate[] = "\
+Content-Type: %s\r\n\
+Accept-Ranges: bytes\r\n\
+Content-Length: %ld\r\n\
+";
 
 void sendToSock(const char* msg, size_t size) {
     int n = write(cliSock, msg, size);
-    
     std::cout << msg;
 }
 
@@ -43,39 +47,44 @@ char *http_time(time_t rt) {
     return time;
 }
 
-char *http_common() {
+void http_common() {
     char* currtime;
     time_t rt;
     time(&rt);
     currtime = http_time(rt);
     
-    sprintf(buffer, commonTemplate, currtime);
-    sendToSock(buffer, sizeof(buffer));
+    sprintf(buffer + strlen(buffer), commonTemplate, currtime);
+}
+
+void http_content(const char *filetype, size_t filesize) {
+    sprintf(buffer + strlen(buffer), contentTemplate, filetype, filesize);
 }
 
 void http200() {
-    sendToSock("HTTP/1.1 200 OK\r\n", 17);
+    strcpy(buffer, "HTTP/1.1 200 OK\r\n");
     http_common();
 /*
 
 Content-Type: image/png
-Last-Modified: Thu, 15 Oct 2009 02:04:11 GMT
 Accept-Ranges: bytes
 Content-Length: 6394
 
 */
-    
-    sendToSock("\r\n", 2);
+    sprintf(buffer + strlen(buffer), commonTemplate, currtime);
+
+    strcat(buffer, "\r\n");
+    sendToSock(buffer, strlen(buffer));
 }
 
 void http304() {
-    sendToSock("HTTP/1.1 304 Not Modified\r\n", 27);
+    strcpy(buffer, "HTTP/1.1 304 Not Modified\r\n");
     http_common();
-    sendToSock("\r\n", 2);
+    strcat(buffer, "\r\n");
+    sendToSock(buffer, strlen(buffer));
 }
 
 void http400() {
-    sendToSock("HTTP/1.1 400 Bad Request\r\n", 26);
+    strcpy(buffer, "HTTP/1.1 400 Bad Request\r\n");
     http_common();
 /*
 
@@ -84,12 +93,12 @@ Accept-Ranges: bytes
 Content-Length: 6394
 
 */
-    
-    sendToSock("\r\n", 2);
+    strcat(buffer, "\r\n");
+    sendToSock(buffer, strlen(buffer));
 }
 
 void http404() {
-    sendToSock("HTTP/1.1 404 Not Found\r\n", 24);
+    strcpy(buffer, "HTTP/1.1 404 Not Found\r\n");
     http_common();
 /*
 
@@ -98,8 +107,8 @@ Accept-Ranges: bytes
 Content-Length: 6394
 
 */
-    
-    sendToSock("\r\n", 2);
+    strcat(buffer, "\r\n");
+    sendToSock(buffer, strlen(buffer));
 }
 
 void header_parse(std::string head) {
@@ -150,6 +159,8 @@ int sendhead() {
     
     webfile = fopen((root + http_path).c_str(), "r");
     
+    bzero(buffer,MAX_BUFFER_LENGTH);
+    
     if (webfile == NULL) {
         http404();
         return -1;
@@ -159,9 +170,10 @@ int sendhead() {
     // TODO: OK
     
     // Send Data
-    sendToSock("HTTP/1.1 204 No Content\r\n",25);
+    strcpy(buffer, "HTTP/1.1 204 No Content\r\n");
     http_common();
-    sendToSock("\r\n", 2);
+    strcat(buffer, "\r\n");
+    sendToSock(buffer, strlen(buffer));
 }
 
 void senddata() {
