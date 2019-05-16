@@ -12,19 +12,6 @@
 #include <ctime>
 #include <map>
 
-void error(const char *msg)
-{
-    perror(msg);
-    exit(1);
-}
-
-std::map<std::string, std::string> http_headers;
-std::string http_method, http_path;
-const unsigned int MAX_BUFFER_LENGTH = 4096;
-char buffer[MAX_BUFFER_LENGTH];
-
-FILE *webfile;
-int cliSock;
 char commonTemplate[] = "\
 Server: csc59866/group1\r\n\
 Date: %s\r\n\
@@ -36,18 +23,29 @@ Accept-Ranges: bytes\r\n\
 Content-Length: %ld\r\n\
 ";
 
-void sendToSock(const char* msg, size_t size) {
-    int n = write(cliSock, msg, size);
-    std::cout << msg;
+void error(const char *msg)
+{
+    perror(msg);
+    exit(1);
 }
 
+std::map<std::string, std::string> http_headers;
+std::string http_method, file_path, webroot;
+const unsigned int MAX_BUFFER_LENGTH = 4096;
+char buffer[MAX_BUFFER_LENGTH];
+
+FILE *webfile;
+int cliSock;
+
+// Time creater for HTTP headers
 char *http_time(time_t rt) {
     char *time = new char[30];
     strftime(time, 30, "%a, %d %b %Y %T %Z", gmtime(&rt));
     return time;
 }
 
-void http_common() {
+// Common Header appender
+void http_header_common() {
     char* currtime;
     time_t rt;
     time(&rt);
@@ -56,59 +54,107 @@ void http_common() {
     sprintf(buffer + strlen(buffer), commonTemplate, currtime);
 }
 
-void http_content(const char *filetype, size_t filesize) {
-    sprintf(buffer + strlen(buffer), contentTemplate, filetype, filesize);
+// Header appender for response with body
+void http_header_content() {
+    long fsize;
+    size_t slash, extpos;
+    std::string type, ext;
+    
+    if (webfile == NULL) {
+        fsize = 0;
+    } else {
+        fseek(webfile, 0L, SEEK_END);
+        fsize = ftell(webfile);
+    }
+    
+    slash = file_path.find_last_of('/');
+    // As case with error handling files
+    if (slash == std::string::npos)
+        ext = file_path;
+    else
+        ext = file_path.substr(slash, file_path.length());
+    
+    extpos = ext.find_last_of('.');
+    if (extpos == std::string::npos) {
+        type = "text/plain";
+    } else {
+        ext = ext.substr(extpos + 1, ext.length());
+        
+        
+        // Image Types
+        if (ext == "jpg" || ext == "jpeg") type = "image/jpeg";
+        else if (ext == "png")  type = "image/png";
+        else if (ext == "gif")  type = "image/gif";
+        else if (ext == "webp") type = "image/webp";
+        // Text Types
+        else if (ext == "html") type = "text/html";
+        else if (ext == "css")  type = "text/css";
+        else if (ext == "js")   type = "text/javascript";
+        else                    type = "text/plain";
+    }
+    
+    sprintf(buffer + strlen(buffer), contentTemplate, type.c_str(), fsize);
 }
 
-void http200() {
-    strcpy(buffer, "HTTP/1.1 200 OK\r\n");
-    http_common();
-/*
+void http_body() {
+    std::cout << "Sending content '" << file_path << "'...\n";
+    size_t len, lenw;
+    
+    rewind(webfile);
 
-Content-Type: image/png
-Accept-Ranges: bytes
-Content-Length: 6394
-
-*/
-    sprintf(buffer + strlen(buffer), commonTemplate, currtime);
-
-    strcat(buffer, "\r\n");
-    sendToSock(buffer, strlen(buffer));
+    do {
+        len = fread(buffer, 1, sizeof(buffer), webfile);
+        if (len) {
+            lenw = write(cliSock, buffer, sizeof(buffer));
+        } else {
+            lenw = 0;
+        }
+        printf("Sent: %ld\n", len);
+    } while (lenw != -1 && len > 0);
+    
+    if (lenw == -1) {
+        perror("Could not complete file copy");
+    } else {
+        std::cout << "... Sent\n";
+    }
 }
 
-void http304() {
-    strcpy(buffer, "HTTP/1.1 304 Not Modified\r\n");
-    http_common();
+void http_send(int content) {
+    http_header_common();
+    if (content)
+        http_header_content();
     strcat(buffer, "\r\n");
-    sendToSock(buffer, strlen(buffer));
+    std::cout << buffer;
+    write(cliSock, buffer, strlen(buffer));
+    
+    if (content && http_method != "HEAD" && webfile != NULL)
+        http_body();
 }
 
-void http400() {
-    strcpy(buffer, "HTTP/1.1 400 Bad Request\r\n");
-    http_common();
-/*
-
-Content-Type: image/png
-Accept-Ranges: bytes
-Content-Length: 6394
-
-*/
-    strcat(buffer, "\r\n");
-    sendToSock(buffer, strlen(buffer));
-}
-
-void http404() {
-    strcpy(buffer, "HTTP/1.1 404 Not Found\r\n");
-    http_common();
-/*
-
-Content-Type: image/png
-Accept-Ranges: bytes
-Content-Length: 6394
-
-*/
-    strcat(buffer, "\r\n");
-    sendToSock(buffer, strlen(buffer));
+void send_http(int code) {
+    switch (code) {
+        case 200:
+            strcpy(buffer, "HTTP/1.1 200 OK\r\n");
+            http_send(1);
+            break;
+        case 304:
+            strcpy(buffer, "HTTP/1.1 304 Not Modified\r\n");
+            http_send(0);
+            break;
+        case 400:
+            file_path = "400.html";
+            webfile = fopen("400.html", "r");
+            strcpy(buffer, "HTTP/1.1 400 Bad Request\r\n");
+            http_send(1);
+            break;
+        case 404:
+            file_path = "404.html";
+            webfile = fopen("404.html", "r");
+            strcpy(buffer, "HTTP/1.1 404 Not Found\r\n");
+            http_send(1);
+            break;
+        
+    }
 }
 
 void header_parse(std::string head) {
@@ -118,19 +164,19 @@ void header_parse(std::string head) {
     pos2 = head.find(' ', pos1);
     http_method = head.substr(pos1, pos2-pos1);
     if (http_method != "GET" && http_method != "HEAD") {
-        http400();
+        send_http(400);
         return;
     }
     
     pos1 = pos2 + 1;
     pos2 = head.find(' ', pos1);
-    http_path = head.substr(pos1, pos2-pos1);
+    file_path = head.substr(pos1, pos2-pos1);
     
     pos1 = pos2 + 1;
     pos2 = head.find("\r\n", pos1);
     head.substr(pos1, pos2-pos1);
     if (head.find("HTTP/", pos1) != pos1) {
-        http400();
+        send_http(400);
         return;
     }
     
@@ -152,35 +198,21 @@ void header_parse(std::string head) {
     }
 }
 
-std::string webroot;
-
-int sendhead() {
-    std::string root("html");
-    
-    webfile = fopen((root + http_path).c_str(), "r");
-    
+void http_respond() {
     bzero(buffer,MAX_BUFFER_LENGTH);
     
+    webfile = fopen((webroot + file_path).c_str(), "r");
     if (webfile == NULL) {
-        http404();
-        return -1;
+        send_http(404);
+        return;
     }
     
     // TODO: Date to Not Modified
-    // TODO: OK
     
-    // Send Data
-    strcpy(buffer, "HTTP/1.1 204 No Content\r\n");
-    http_common();
-    strcat(buffer, "\r\n");
-    sendToSock(buffer, strlen(buffer));
-}
-
-void senddata() {
-    int n;
+    send_http(200);
     
-    
-    
+    if (webfile != NULL)
+        fclose(webfile);
 }
 
 int main(int argc, char *argv[]) {
@@ -251,10 +283,11 @@ int main(int argc, char *argv[]) {
         // Parse incoming header
         header_parse(header);
         
+        if (file_path == "/") file_path = "/index.html";
+        
         // Send data based on header
         printf(" ### Server Response ###\n");
-        if (sendhead() == 0 && http_method != "HEAD")
-            senddata();
+        http_respond();
         
         close(cliSock);
     }
