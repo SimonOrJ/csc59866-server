@@ -21,131 +21,191 @@
 #include <ctime>
 #include <map>
 
+/**
+ * HTTP Header time format
+ * To be used with strftime and strptime
+ * used in httpDateTime() and parseHttpDateTime()
+ */
 const char *timeFormat = "%a, %d %b %Y %T %Z";
+
+/**
+ * HTTP Header common format
+ * Used on every HTTP responses.
+ * Formatters:
+ *   1. Date from httpDateTime method
+ *   2. "keep-alive" or "close"
+ */
 const char *commonTemplate = "\
 Server: CSC59866/Group1 (C++)\r\n\
 Date: %s\r\n\
 Connection: %s\r\n\
 ";
+
+/**
+ * HTTP Header content format
+ * Used on non-HEAD responses except 304.
+ * Formatters:
+ *   1. Content type based on file extension
+ *   2. Following content length
+ */
 const char *contentTemplate = "\
 Content-Type: %s\r\n\
 Accept-Ranges: bytes\r\n\
 Content-Length: %ld\r\n\
 ";
 
-std::map<std::string, std::string> http_headers;
-std::string http_method, file_path, webroot;
-const unsigned int MAX_BUFFER_LENGTH = 4096;
-char buffer[MAX_BUFFER_LENGTH];
+// Global variables
+std::map<std::string, std::string> http_headers;    // Header storage map
+std::string http_method, file_path, webroot;        // Global strings
+const unsigned int MAX_BUFFER_LENGTH = 4096;        // Max buffer length
+char buffer[MAX_BUFFER_LENGTH]; // Global buffer with MBL length (4096)
+int cliSock,                    // Socket
+    connId = 0,                 // Connection ID (increments with every conn)
+    keepAlive,                  // keep-alive flag
+    resErr;                     // Header parsing error flag 
 
-FILE *webfile;
-struct stat webfile_stat;
-int cliSock, connId = 0;
-int keepAlive, resErr;
+// Global file-based variables
+FILE *webFile;              // File pointer for reading                    
+struct stat webFileStat;    // File statistics for dates
 
-// Time creater for HTTP headers
-char *http_time(time_t rt) {
-    char *time = new char[30];
-    strftime(time, 30, timeFormat, gmtime(&rt));
-    return time;
+/**
+ * Unix time to HTTP format builder
+ * @param rt input Unix Epoch time
+ * @return datetime in HTTP format
+ */
+char *httpDateTime(time_t rt) {
+    char *time = new char[30];      // HTTP time is exactly 30 chars long
+    strftime(time, 30, timeFormat, gmtime(&rt));    // Do the formatting
+    return time;                    // Return datetime in HTTP format
 }
 
-// Time parser from HTTP header
-time_t http_time_parse(const char* time) {
-    struct tm tmv;
-    memset(&tmv, 0, sizeof(struct tm));
-    strptime(time, timeFormat, &tmv);
-    return mktime(&tmv);
+/**
+ * Time parser from HTTP header
+ * @param time 30-character long time in HTTP format
+ * @return time in Unix Epoch time format
+ */
+time_t parseHttpDateTime(const char* time) {
+    struct tm tmv;                      // Declare tmv with tm struct...
+    memset(&tmv, 0, sizeof(struct tm)); // ... and initialize it
+    strptime(time, timeFormat, &tmv);   // Translate and put into tmv
+    return mktime(&tmv);        // Convert then return in Unix Epoch format
 }
 
-// Common Header appender
-void http_header_common() {
-    char* currtime;
-    time_t rt;
-    time(&rt);
-    currtime = http_time(rt);
+/**
+ * Header appender for response with body
+ * This is not called if HEAD method is used.
+ * This is not called when HTTP response is 304.
+ */
+void appendBodyInfo() {
+    long fsize;                 // Filesize
+    size_t slashPos, extPos;    // Position trackers
+    std::string type, ext;      // Type and Extension strings
     
-    sprintf(buffer + strlen(buffer), commonTemplate, currtime, keepAlive ? "keep-alive" : "close");
-}
-
-// Header appender for response with body
-void http_header_content() {
-    long fsize;
-    size_t slash, extpos;
-    std::string type, ext;
-    
-    if (webfile == NULL) {
-        fsize = 0;
+    if (webFile == NULL) {              // Check if file to send exists
+        fsize = 0;                      // No file = no content
     } else {
-        fseek(webfile, 0L, SEEK_END);
-        fsize = ftell(webfile);
+        fseek(webFile, 0L, SEEK_END);   // Find end of file
+        fsize = ftell(webFile);         // Get the file size
     }
     
-    slash = file_path.find_last_of('/');
-    // As case with error handling files
-    if (slash == std::string::npos)
-        ext = file_path;
-    else
-        ext = file_path.substr(slash, file_path.length());
+    // e.g. file_path is "/index.html"
+    slashPos = file_path.find_last_of('/'); // Find position of '/'
     
-    extpos = ext.find_last_of('.');
-    if (extpos == std::string::npos) {
-        type = "text/plain";
+    if (slashPos == std::string::npos)  // If there is no /
+        ext = file_path;                // (400.html, 404.html files has none)
+    else
+        ext = file_path.substr(slashPos, file_path.length());   // Crop end in
+    
+    // e.g. ext is "index.html"
+    extPos = ext.find_last_of('.');     // Find position of '.'
+    if (extPos == std::string::npos) {  // If '.' is not found
+        type = "text/plain";            // assume text file...
     } else {
-        ext = ext.substr(extpos + 1, ext.length());
-        
+        ext = ext.substr(extPos + 1, ext.length()); // Crop end in
+        // e.g. ext is "html"
         
         // Image Types
-        if (ext == "jpg" || ext == "jpeg") type = "image/jpeg";
-        else if (ext == "png")  type = "image/png";
-        else if (ext == "gif")  type = "image/gif";
-        else if (ext == "webp") type = "image/webp";
+        if (ext == "jpg" || ext == "jpeg") type = "image/jpeg"; // jpeg files
+        else if (ext == "png")  type = "image/png";             // png file
+        else if (ext == "gif")  type = "image/gif";             // gif file
+        else if (ext == "webp") type = "image/webp";            // webp file
         // Text Types
-        else if (ext == "html") type = "text/html";
-        else if (ext == "css")  type = "text/css";
-        else if (ext == "js")   type = "text/javascript";
-        else                    type = "text/plain";
+        else if (ext == "html") type = "text/html";         // html file
+        else if (ext == "css")  type = "text/css";          // css file
+        else if (ext == "js")   type = "text/javascript";   // js file
+        
+        else                    type = "text/plain";        // all other
     }
     
-    sprintf(buffer + strlen(buffer), contentTemplate, type.c_str(), fsize);
+    
+    sprintf(buffer + strlen(buffer), contentTemplate, // Append content info...
+            type.c_str(),   // Type (into char array)
+            fsize           // File size
+    );                      // ... to the end of buffer
 }
 
-void http_body() {
-    std::cout << "Sending content '" << file_path << "'...\n";
-    size_t len, lenw;
+/**
+ * Sending a file through body
+ * This is not called if HEAD method is used.
+ * This is not called when content length is 0.
+ */
+void sendBody() {
+    std::cout << "Sending content '" << file_path << "'...\n";  // Print info
+    size_t len;         // Bytes read
+    ssize_t slen;       // Bytes sent
     
-    rewind(webfile);
+    rewind(webFile);    // Send file pointer to the beginning of file
 
     do {
-        len = fread(buffer, 1, sizeof(buffer), webfile);
-        if (len) {
-            lenw = write(cliSock, buffer, sizeof(buffer));
+        len = fread(buffer, 1, sizeof(buffer), webFile);    // Read file    
+        if (len) {                                          // If exists
+            slen = write(cliSock, buffer, sizeof(buffer));  // send it.
         } else {
-            lenw = 0;
+            slen = 0;   // Default if there was nothing to write.
         }
-        printf("  Sent: %u\n", len);
-    } while (lenw != -1 && len > 0);
-    
-    if (lenw == -1) {
-        perror("Could not complete file copy");
+        printf("  Sent: %u\n", len);        // Print bytes sent
+    } while (slen != -1 && len == slen);    // Keep looping if no error or
+                                            //   there is more data to send.
+    if (slen == -1) {                           // If there was a write error
+        perror("Could not complete file copy"); // report it
     } else {
-        std::cout << "... Done!\n";
+        std::cout << "... Done!\n";         // Print info
     }
 }
 
-void http_send(int content) {
-    http_header_common();
-    if (content)
-        http_header_content();
-    strcat(buffer, "\r\n");
-    std::cout << buffer;
-    write(cliSock, buffer, strlen(buffer));
+/**
+ * HTTP Response Sender
+ * This function is in charge of sending a response to the HTTP request.
+ * @param hasBody A flag if this should also send the body of the response.
+ */
+void sendHttpResponse(int hasBody) {
+    time_t rt;  // Unix time
+    time(&rt);  // Get current time
     
-    if (content && http_method != "HEAD" && webfile != NULL)
-        http_body();
+    sprintf(buffer + strlen(buffer), commonTemplate,   // Append common info...
+            httpDateTime(rt),                   // HTTP format datetime string
+            keepAlive ? "keep-alive" : "close"  // keep-alive flag
+    );                                          // ... to the end of buffer
+    
+    if (hasBody)            // If there will be body
+        appendBodyInfo();   //   then append body info
+    
+    strcat(buffer, "\r\n"); // HTTP request complete with extra line break
+    std::cout << buffer;    // Print header to send to console
+    write(cliSock, buffer, strlen(buffer)); // Send the header!
+    
+    if (hasBody                         // If HTTP has body
+            && http_method != "HEAD"    // ... and is not HEAD method
+            && webFile != NULL          // ... and file pointer is not NULL
+    ) sendBody();                       //   then send the content into body.
 }
 
-void send_http(int code) {
+/**
+ * HTTP Response Preparer
+ * This function prepares HTTP respond with proper header.
+ * @param code HTTP code (200, 304, 400, 404)
+ */
+void httpRespond(int code) {
     printf("[#%d] -> Sending server response\n", connId);
     
     switch (code) {
@@ -153,27 +213,32 @@ void send_http(int code) {
             strcpy(buffer, "HTTP/1.1 200 OK\r\n");
             // Add Last-Modified header
             strcat(buffer, "Last-Modified: ");
-            strcat(buffer, http_time(webfile_stat.st_mtime));
+            strcat(buffer, httpDateTime(webFileStat.st_mtime));
             strcat(buffer, "\r\nCache-Control: public, max-age=86400\r\n");
-            http_send(1);
+            sendHttpResponse(1);
             break;
         case 304:
             strcpy(buffer, "HTTP/1.1 304 Not Modified\r\n");
-            http_send(0);
+            sendHttpResponse(0);
             break;
         case 400:
             file_path = "400.html";
-            webfile = fopen("400.html", "r");
+            webFile = fopen("400.html", "r");
             strcpy(buffer, "HTTP/1.1 400 Bad Request\r\n");
-            http_send(1);
+            sendHttpResponse(1);
             break;
         case 404:
             file_path = "404.html";
-            webfile = fopen("404.html", "r");
+            webFile = fopen("404.html", "r");
             strcpy(buffer, "HTTP/1.1 404 Not Found\r\n");
-            http_send(1);
+            sendHttpResponse(1);
             break;
-        
+        default:
+            file_path = "501.html";
+            webFile = fopen("501.html", "r");
+            strcpy(buffer, "HTTP/1.1 501 Not Implemented\r\n");
+            sendHttpResponse(1);
+            break;
     }
     printf("[#%d] >| Sending finished\n", connId);
 }
@@ -201,7 +266,7 @@ void http_receive(std::string head) {
     if (head.find("HTTP/", pos1) != pos1) {
         keepAlive = 0;
         resErr = 1;
-        send_http(400);
+        httpRespond(400);
         return;
     }
     
@@ -227,7 +292,7 @@ void http_receive(std::string head) {
 void http_respond() {
     bzero(buffer,MAX_BUFFER_LENGTH);
     std::string path(webroot + file_path);
-    webfile = fopen(path.c_str(), "r");
+    webFile = fopen(path.c_str(), "r");
     std::string connection = http_headers["Connection"];
     std::string modsince = http_headers["If-Modified-Since"];
     
@@ -241,26 +306,26 @@ void http_respond() {
             keepAlive = 0;
     }
     
-    if (webfile == NULL) {
-        send_http(404);
+    if (webFile == NULL) {
+        httpRespond(404);
         return;
     }
     
-    stat(path.c_str(), &webfile_stat);
+    stat(path.c_str(), &webFileStat);
 
     double timecmp;
     if (modsince.empty()) {
         timecmp = -1;
     } else {
-        time_t climod = http_time_parse(modsince.c_str());
-        timecmp = difftime(climod, webfile_stat.st_mtime);
+        time_t climod = parseHttpDateTime(modsince.c_str());
+        timecmp = difftime(climod, webFileStat.st_mtime);
     }
     
-    if (timecmp >= 0) send_http(304);
-    else send_http(200);
+    if (timecmp >= 0) httpRespond(304);
+    else httpRespond(200);
     
-    if (webfile != NULL)
-        fclose(webfile);
+    if (webFile != NULL)
+        fclose(webFile);
 }
 
 void httpClientAccept() {
@@ -285,9 +350,17 @@ void httpClientAccept() {
         }
         
         header = buffer;
-        if (header.substr(0, 4) != "GET " && header.substr(0, 5) != "HEAD ") {
+        if (
+                header.find(" /", 3) == std::string::npos
+                || header.find(" HTTP/", 5) == std::string::npos
+        ) {
             keepAlive = 0;
-            send_http(400);
+            httpRespond(400);
+            break;
+        }
+        
+        if (header.substr(0, 4) != "GET " && header.substr(0, 5) != "HEAD ") {
+            httpRespond(501);
             break;
         }
         
