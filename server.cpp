@@ -47,9 +47,11 @@ char *http_time(time_t rt) {
 
 // Time parser from HTTP header
 time_t http_time_parse(const char* time) {
-    struct tm tm;
-    strptime(time, timeFormat, &tm);
-    return mktime(&tm);
+    std::cout << time << std::endl;
+    struct tm tmv;
+    memset(&tmv, 0, sizeof(struct tm));
+    strptime(time, timeFormat, &tmv);
+    return mktime(&tmv);
 }
 
 // Common Header appender
@@ -236,15 +238,18 @@ void http_respond() {
     
     stat(path.c_str(), &webfile_stat);
 
-    bool notmod;
+    double timecmp;
     if (modsince.empty()) {
-        notmod = 0;
+        timecmp = -1;
     } else {
         time_t climod = http_time_parse(modsince.c_str());
-        notmod = climod >= webfile_stat.st_mtime;
+        timecmp = difftime(climod, webfile_stat.st_mtime);
     }
     
-    if (notmod) send_http(304);
+    std::cout << modsince.c_str() << std::endl;
+    std::cout << "Time comparison: " << http_time_parse(modsince.c_str()) << ' ' << webfile_stat.st_mtime << ' ' << timecmp << std::endl;
+    
+    if (timecmp >= 0) send_http(304);
     else send_http(200);
     
     if (webfile != NULL)
