@@ -20,7 +20,7 @@ const char *timeFormat = "%a, %d %b %Y %T %Z";
 const char *commonTemplate = "\
 Server: CSC59866/Group1 (C++)\r\n\
 Date: %s\r\n\
-Connection: keep-alive\r\n\
+Connection: %s\r\n\
 ";
 const char *contentTemplate = "\
 Content-Type: %s\r\n\
@@ -36,7 +36,7 @@ char buffer[MAX_BUFFER_LENGTH];
 FILE *webfile;
 struct stat webfile_stat;
 int cliSock;
-int httpClientContinue;
+int keepAlive, resErr;
 
 // Time creater for HTTP headers
 char *http_time(time_t rt) {
@@ -59,7 +59,7 @@ void http_header_common() {
     time(&rt);
     currtime = http_time(rt);
     
-    sprintf(buffer + strlen(buffer), commonTemplate, currtime);
+    sprintf(buffer + strlen(buffer), commonTemplate, currtime, keepAlive ? "keep-alive" : "close");
 }
 
 // Header appender for response with body
@@ -117,7 +117,7 @@ void http_body() {
         } else {
             lenw = 0;
         }
-        printf("Sent: %ld\n", len);
+        printf("Sent: %lu\n", len);
     } while (lenw != -1 && len > 0);
     
     if (lenw == -1) {
@@ -140,6 +140,7 @@ void http_send(int content) {
 }
 
 void send_http(int code) {
+    printf(" ### Server Response ###\n");
     switch (code) {
         case 200:
             strcpy(buffer, "HTTP/1.1 200 OK\r\n");
@@ -158,7 +159,6 @@ void send_http(int code) {
             webfile = fopen("400.html", "r");
             strcpy(buffer, "HTTP/1.1 400 Bad Request\r\n");
             http_send(1);
-            httpClientContinue = 0;
             break;
         case 404:
             file_path = "404.html";
@@ -173,28 +173,29 @@ void send_http(int code) {
 void header_parse(std::string head) {
     http_headers.clear();
     
+    // Method
     size_t pos1 = 0, pos2;
     pos2 = head.find(' ', pos1);
     http_method = head.substr(pos1, pos2-pos1);
-    if (http_method != "GET" && http_method != "HEAD") {
-        send_http(400);
-        return;
-    }
     
+    // Path
     pos1 = pos2 + 1;
     pos2 = head.find(' ', pos1);
     file_path = head.substr(pos1, pos2-pos1);
     
+    // HTTP Version
     pos1 = pos2 + 1;
     pos2 = head.find("\r\n", pos1);
     head.substr(pos1, pos2-pos1);
     if (head.find("HTTP/", pos1) != pos1) {
+        keepAlive = 0;
+        resErr = 1;
         send_http(400);
         return;
     }
     
+    // Rest of the header
     pos1 = pos2 + 2;
-    
     std::string key, val;
     while (1) {
         pos2 = head.find(": ", pos1);
@@ -213,10 +214,20 @@ void header_parse(std::string head) {
 
 void http_respond() {
     bzero(buffer,MAX_BUFFER_LENGTH);
-    
     std::string path(webroot + file_path);
-    
     webfile = fopen(path.c_str(), "r");
+    std::string connection = http_headers["Connection"];
+    std::string modsince = http_headers["If-Modified-Since"];
+    
+    if (connection.empty()) {
+        keepAlive = 0;
+    } else {
+        if (connection.find("keep-alive") != std::string::npos
+            || connection.find("Keep-Alive") != std::string::npos)
+            keepAlive = 1;
+        else
+            keepAlive = 0;
+    }
     
     if (webfile == NULL) {
         send_http(404);
@@ -225,8 +236,6 @@ void http_respond() {
     
     stat(path.c_str(), &webfile_stat);
 
-    std::string modsince = http_headers["If-Modified-Since"];
-    std::cout << modsince << std::endl;
     bool notmod;
     if (modsince.empty()) {
         notmod = 0;
@@ -246,21 +255,37 @@ void httpClientAccept() {
     std::string header;
     int n;
     
-    while (httpClientContinue) {
+    keepAlive = 1;
+    resErr = 0;
+    while (keepAlive && resErr == 0) {
         // Read header
         bzero(buffer,MAX_BUFFER_LENGTH);
         n = read(cliSock, buffer, MAX_BUFFER_LENGTH);
         if (n < 0) {
             perror("Couldn't read socket!");
-            close(cliSock);                        //     Close connection
-            return;
+            break;
+        } else if (n == 0) {
+            break;
+        } else if (strcmp(buffer, "\r\n") == 0) {
+            continue;
         }
         
         header = buffer;
+        if (header.substr(0, 4) != "GET " && header.substr(0, 5) != "HEAD ") {
+            keepAlive = 0;
+            send_http(400);
+            break;
+        }
         
         while (header.find("\r\n\r\n") == std::string::npos) {
             bzero(buffer,MAX_BUFFER_LENGTH);
-            read(cliSock, buffer, MAX_BUFFER_LENGTH);
+            n = read(cliSock, buffer, MAX_BUFFER_LENGTH);
+            if (n < 0) {
+                perror("Couldn't read socket!");
+                break;
+            } else if (n == 0) {
+                break;
+            }
             header.append(buffer);
         }
         
@@ -269,13 +294,12 @@ void httpClientAccept() {
         // Parse incoming header
         header_parse(header);
         
-        if (httpClientContinue == 0)
+        if (resErr)
             break;
         
         if (file_path == "/") file_path = "/index.html";
         
         // Send data based on header
-        printf(" ### Server Response ###\n");
         http_respond();
     }
     
@@ -329,13 +353,12 @@ int main(int argc, char *argv[]) {
         
         if (cliSock < 0) {
             perror("Connection errored");       //     Let console know
-            close(cliSock);                        //     Close connection
+            close(cliSock);                     //     Close connection
             continue;                           //     Next connection
         }
         
-        httpClientContinue = 1;
         httpClientAccept();
     }
     close(serverSock);
-    return 0; 
+    return 0;
 }
