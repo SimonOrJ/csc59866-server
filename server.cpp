@@ -1,10 +1,14 @@
 // Code by JinWon Chung
 // Usage: [port] [path]
+
+// TODO: Fix memory leak
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 #include <sys/types.h> 
+#include <sys/stat.h> 
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <iostream>
@@ -12,22 +16,17 @@
 #include <ctime>
 #include <map>
 
-char commonTemplate[] = "\
-Server: csc59866/group1\r\n\
+const char *timeFormat = "%a, %d %b %Y %T %Z";
+const char *commonTemplate = "\
+Server: CSC59866/Group1 (C++)\r\n\
 Date: %s\r\n\
 Connection: keep-alive\r\n\
 ";
-char contentTemplate[] = "\
+const char *contentTemplate = "\
 Content-Type: %s\r\n\
 Accept-Ranges: bytes\r\n\
 Content-Length: %ld\r\n\
 ";
-
-void error(const char *msg)
-{
-    perror(msg);
-    exit(1);
-}
 
 std::map<std::string, std::string> http_headers;
 std::string http_method, file_path, webroot;
@@ -35,13 +34,21 @@ const unsigned int MAX_BUFFER_LENGTH = 4096;
 char buffer[MAX_BUFFER_LENGTH];
 
 FILE *webfile;
+struct stat webfile_stat;
 int cliSock;
 
 // Time creater for HTTP headers
 char *http_time(time_t rt) {
     char *time = new char[30];
-    strftime(time, 30, "%a, %d %b %Y %T %Z", gmtime(&rt));
+    strftime(time, 30, timeFormat, gmtime(&rt));
     return time;
+}
+
+// Time parser from HTTP header
+time_t http_time_parse(const char* time) {
+    struct tm tm;
+    strptime(time, timeFormat, &tm);
+    return mktime(&tm);
 }
 
 // Common Header appender
@@ -115,7 +122,7 @@ void http_body() {
     if (lenw == -1) {
         perror("Could not complete file copy");
     } else {
-        std::cout << "... Sent\n";
+        std::cout << "... Sent!\n\n";
     }
 }
 
@@ -135,6 +142,10 @@ void send_http(int code) {
     switch (code) {
         case 200:
             strcpy(buffer, "HTTP/1.1 200 OK\r\n");
+            // Add Last-Modified header
+            strcat(buffer, "Last-Modified: ");
+            strcat(buffer, http_time(webfile_stat.st_mtime));
+            strcat(buffer, "\r\nCache-Control: public, max-age=86400\r\n");
             http_send(1);
             break;
         case 304:
@@ -192,7 +203,7 @@ void header_parse(std::string head) {
         val = head.substr(pos1, pos2-pos1);
         pos1 = pos2 + 2;
         
-        http_headers.insert( std::pair<std::string, std::string>(key, val) );
+        http_headers[key] = val;
         if (head.substr(pos1, 2) == "\r\n")
             break;
     }
@@ -201,20 +212,43 @@ void header_parse(std::string head) {
 void http_respond() {
     bzero(buffer,MAX_BUFFER_LENGTH);
     
-    webfile = fopen((webroot + file_path).c_str(), "r");
+    std::string path(webroot + file_path);
+    
+    webfile = fopen(path.c_str(), "r");
+    
     if (webfile == NULL) {
         send_http(404);
         return;
     }
     
-    // TODO: Date to Not Modified
+    stat(path.c_str(), &webfile_stat);
+
+/*    
+    std::cout << "\nPrinting the contents of http_headers:\n";
+    for(std::map<std::string, std::string>::const_iterator it = http_headers.begin(); it != http_headers.end(); ++it) {
+        std::cout << it->first << " " << it->second << "\n";
+    }
+    std::cout << "End http_headers\n";
+*/
+
+    std::string modsince = http_headers["If-Modified-Since"];
+    std::cout << modsince << std::endl;
+    bool notmod;
+    if (modsince.empty()) {
+        notmod = 0;
+    } else {
+        time_t climod = http_time_parse(modsince.c_str());
+        notmod = climod >= webfile_stat.st_mtime;
+    }
     
-    send_http(200);
+    if (notmod) send_http(304);
+    else send_http(200);
     
     if (webfile != NULL)
         fclose(webfile);
 }
 
+// Main Stuff
 int main(int argc, char *argv[]) {
     std::string header;
     int serverSock, portno;
@@ -226,6 +260,7 @@ int main(int argc, char *argv[]) {
         portno = atoi(argv[1]);
     } else {
         portno = 8080;
+        printf("Accepted Arguments: [port] [root path]\n");
     }
     
     if (argc > 2) {
@@ -248,7 +283,7 @@ int main(int argc, char *argv[]) {
     serv_addr.sin_port = htons(portno);
     
     if (bind(serverSock, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
-        perror("Could not bind");
+        perror("Could not bind to port");
         exit(1);
     }
     
@@ -268,7 +303,11 @@ int main(int argc, char *argv[]) {
         // Read header
         bzero(buffer,MAX_BUFFER_LENGTH);
         n = read(cliSock, buffer, MAX_BUFFER_LENGTH);
-        if (n < 0) error("ERROR reading from socket");
+        if (n < 0) {
+            perror("Couldn't read socket!");
+            close(cliSock);                        //     Close connection
+            continue;
+        }
         
         header = buffer;
         
@@ -289,15 +328,10 @@ int main(int argc, char *argv[]) {
         printf(" ### Server Response ###\n");
         http_respond();
         
+        printf("Socket Closing\n");
+        
         close(cliSock);
     }
     close(serverSock);
     return 0; 
 }
-
-// TODO: Input GET, HEAD, Conditional GET
-// TODO: Output 200, 304, 400, 404
-// $HTTP_SERVER_HOME
-// $HTTP_ROOT = $HTTP_SERVER_HOME/html
-
-
