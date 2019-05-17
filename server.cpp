@@ -55,9 +55,9 @@ Content-Length: %ld\r\n\
 ";
 
 // Global variables
-std::map<std::string, std::string> http_headers;    // Header storage map
-std::string http_method, file_path, webroot;        // Global strings
-const unsigned int MAX_BUFFER_LENGTH = 4096;        // Max buffer length
+std::map<std::string, std::string> httpHeaders; // Header storage map
+std::string httpMethod, filePath, webroot;      // Global strings
+const unsigned int MAX_BUFFER_LENGTH = 4096;    // Max buffer length
 char buffer[MAX_BUFFER_LENGTH]; // Global buffer with MBL length (4096)
 int cliSock,                    // Socket
     connId = 0,                 // Connection ID (increments with every conn)
@@ -108,13 +108,13 @@ void appendBodyInfo() {
         fsize = ftell(webFile);         // Get the file size
     }
     
-    // e.g. file_path is "/index.html"
-    slashPos = file_path.find_last_of('/'); // Find position of '/'
+    // e.g. filePath is "/index.html"
+    slashPos = filePath.find_last_of('/'); // Find position of '/'
     
     if (slashPos == std::string::npos)  // If there is no /
-        ext = file_path;                // (400.html, 404.html files has none)
+        ext = filePath;                 // (400.html, 404.html files has none)
     else
-        ext = file_path.substr(slashPos, file_path.length());   // Crop end in
+        ext = filePath.substr(slashPos, filePath.length());   // Crop end in
     
     // e.g. ext is "index.html"
     extPos = ext.find_last_of('.');     // Find position of '.'
@@ -150,7 +150,7 @@ void appendBodyInfo() {
  * This is not called when content length is 0.
  */
 void sendBody() {
-    std::cout << "Sending content '" << file_path << "'...\n";  // Print info
+    std::cout << "Sending content '" << filePath << "'...\n";  // Print info
     size_t len;         // Bytes read
     ssize_t slen;       // Bytes sent
     
@@ -166,8 +166,9 @@ void sendBody() {
         printf("  Sent: %u\n", len);        // Print bytes sent
     } while (slen != -1 && len == slen);    // Keep looping if no error or
                                             //   there is more data to send.
-    if (slen == -1) {                           // If there was a write error
-        perror("Could not complete file copy"); // report it
+    if (slen == -1) {                       // If there was a write error
+        printf("[#%d][ERROR] ", connId);    //   Print client ID
+        perror("Could not complete file transfer"); //   report it
     } else {
         std::cout << "... Done!\n";         // Print info
     }
@@ -195,7 +196,7 @@ void sendHttpResponse(int hasBody) {
     write(cliSock, buffer, strlen(buffer)); // Send the header!
     
     if (hasBody                         // If HTTP has body
-            && http_method != "HEAD"    // ... and is not HEAD method
+            && httpMethod != "HEAD"     // ... and is not HEAD method
             && webFile != NULL          // ... and file pointer is not NULL
     ) sendBody();                       //   then send the content into body.
 }
@@ -206,7 +207,7 @@ void sendHttpResponse(int hasBody) {
  * @param file Error file path
  */
 void openErrorFile(const char *file) {
-    file_path = file;
+    filePath = file;
     webFile = fopen(file, "r");
 }
 
@@ -263,15 +264,15 @@ void httpCode(int code) {
  * If an HTTP request results in a bad request, this should be run.
  */
 void handleBadRequest() {
-        keepAlive = 0;      // If not: break connection
-        resErr = 1;         // Raise error flag
-        httpCode(400);      // Respond with 400 Bad Request
+        keepAlive = 0;  // If not: break connection
+        resErr = 1;     // Raise error flag
+        httpCode(400);  // Respond with 400 Bad Request
 }
 
 /**
  * HTTP request header parser
  * This function reads headers and parses them into global variables.
- * Variables affected: [http_method, file_path, http_headers]
+ * Variables affected: [httpMethod, filePath, httpHeaders]
  */
 void parseHeaders(std::string head) {
     size_t pos1 = 0, pos2, posn;    // Declare position trackers
@@ -281,7 +282,7 @@ void parseHeaders(std::string head) {
                                     // Print intent
     std::cout << head << std::endl; // Print current headers
     
-    http_headers.clear();           // Clear map to handle new headers
+    httpHeaders.clear();            // Clear map to handle new headers
     
     // Find line break position first
     posn = head.find("\r\n", pos1);
@@ -292,7 +293,7 @@ void parseHeaders(std::string head) {
         handleBadRequest();         //   Trigger bad request and exit
         return;
     }
-    http_method = head.substr(pos1, pos2-pos1); // Store method
+    httpMethod = head.substr(pos1, pos2-pos1);  // Store method
     // Note: Method is validated while gathering header buffer.
     
     // Path
@@ -302,7 +303,7 @@ void parseHeaders(std::string head) {
         handleBadRequest();         //   Trigger bad request and exit
         return;
     }
-    file_path = head.substr(pos1, pos2-pos1);   // Store path
+    filePath = head.substr(pos1, pos2-pos1);    // Store path
     
     // HTTP Version
     pos1 = pos2 + 1;                // Update pos1 tracker
@@ -329,7 +330,7 @@ void parseHeaders(std::string head) {
         val = head.substr(pos1, pos2-pos1); // This is the value
         pos1 = pos2 + 2;                    // Update pos1 tracker
         
-        http_headers[key] = val;            // Put key-value pair in the map
+        httpHeaders[key] = val;             // Put key-value pair in the map
         if (head.substr(pos1, 2) == "\r\n") // Check if there's another \n
             break;                          // Stop looping
     }
@@ -342,9 +343,9 @@ void parseHeaders(std::string head) {
  * Responds to the HTTP request
  */
 void sendHTTPResponse() {
-    std::string path(webroot + file_path),              // Setup file path
-        connection = http_headers["Connection"],        // Get Conn header
-        modsince = http_headers["If-Modified-Since"];   // Get IMS header
+    std::string path(webroot + filePath),              // Setup file path
+        connection = httpHeaders["Connection"],        // Get Conn header
+        modsince = httpHeaders["If-Modified-Since"];   // Get IMS header
     bzero(buffer,MAX_BUFFER_LENGTH);    // Zero out the buffer
     webFile = fopen(path.c_str(), "r"); // Open file from path
     double timecmp;                     // Time comparison
@@ -370,7 +371,7 @@ void sendHTTPResponse() {
     if (modsince.empty()) { // If IMS header is not defined
         timecmp = -1;       // *Force HTTP code 200*
     } else {
-        time_t climod = parseHttpDateTime(modsince.c_str());    // Parse IMS
+        time_t climod = parseHttpDateTime(modsince.c_str());// Parse IMS
         timecmp = difftime(climod, webFileStat.st_mtime);   // Check difference
     }
     
@@ -382,12 +383,12 @@ void sendHTTPResponse() {
 
 /**
  * Client Process
- * Create a new process here so the server can accept more connections while
+ * Create a child process here so the server can accept more connections while
  * waiting on existing connections to complete and send data through read().
  */
 void clientProcess() {
     connId++;           // Increment connection
-    if (fork() != 0)    // Fork into a new process
+    if (fork() != 0)    // Fork into a new child process
         return;         // If parent, exit out of the function
 
     std::string header; // Header mega-string
@@ -403,7 +404,8 @@ void clientProcess() {
         // Read header
         n = read(cliSock, buffer, MAX_BUFFER_LENGTH);   // Read into buffer
         if (n < 0) {                            // If there was an error
-            perror("Couldn't read socket!");    //   Print error and exit
+            printf("[#%d][ERROR] ", connId);    //   Print client ID
+            perror("Couldn't read socket!");    //   Append error and exit
             break;
         } else if (n == 0) {                    // If nothing was read
             break;                              //   Exit
@@ -435,7 +437,8 @@ void clientProcess() {
             bzero(buffer,MAX_BUFFER_LENGTH);                // Clear buffer
             n = read(cliSock, buffer, MAX_BUFFER_LENGTH);   // Read into buffer
             if (n < 0) {                            // If there was an error
-                perror("Couldn't read socket!");    //   Print error and exit
+                printf("[#%d][ERROR] ", connId);    //   Print client ID
+                perror("Couldn't read socket");     //   Append error and exit
                 break;
             } else if (n == 0) {                    // If nothing was read
                 break;                              //   Exit
@@ -443,79 +446,85 @@ void clientProcess() {
             header.append(buffer);  // Append buffer to header string
         }
         
-        // Parse incoming header
-        parseHeaders(header);
+        parseHeaders(header);   // Parse incoming header
+        if (resErr)             // If parseHeaders() resulted in an error
+            break;              //   ... then exit out
         
-        if (resErr) // If parseHeaders() resulted in an error
-            break;
+        if (filePath.at(filePath.length()-1) == '/')         // If path ends with '/'
+            filePath.append("index.html");  // Look for index.html file
         
-        if (file_path == "/") file_path = "/index.html";
-        
-        // Send data based on header
-        sendHTTPResponse();
+        sendHTTPResponse(); // Send response based on header
     }
     
-    shutdown(cliSock, SHUT_RDWR);
-    close(cliSock);
-    printf("[#%d][X] ### Connection Closed ###\n", connId);
+    shutdown(cliSock, SHUT_RDWR);   // Shut down the socket before closing
+    close(cliSock);                 // Close the socket
+    printf("[#%d][X] ### Connection Closed ###\n", connId); // Print info
     
-    exit(0);
+    exit(0);    // Exit the child process
 }
 
 // Main Stuff
 int main(int argc, char *argv[]) {
-    int serverSock, portno;
-    socklen_t clilen;
-    struct sockaddr_in serv_addr, cli_addr;
+    int serverSock, portno;                     // Socket and port
+    socklen_t clilen;                           // Socket length
+    struct sockaddr_in serverAddr, clientAddr;  // Socket address info
     
-    setenv("TZ", "GMT", 1); // Set timezone to GMT
+    setenv("TZ", "GMT", 1); // Set timezone to GMT (for HTTP dates)
 
-    if (argc > 1) {
-        portno = atoi(argv[1]);
+    if (argc > 1) {             // If there's some parameters
+        portno = atoi(argv[1]); //   Interpret first parameter as port
     } else {
-        portno = 8080;
-        printf("Accepted Arguments: [port] [root path]\n");
+        portno = 8080;          //   Make port 8080 (80 is system reserved)
+        printf("Accepted Params: [port] [root path]\n"); // Print arg helper
     }
     
-    if (argc > 2) {
-        webroot = argv[2];
+    if (argc > 2) {         //   If there's 2 or more parameters
+        webroot = argv[2];  //     Interpret as html root
     } else {
-        webroot = "html";
+        webroot = "html";   //     Set "./html" as root
     }
     
-    serverSock = socket(AF_INET, SOCK_STREAM, 0);
-
-    if (serverSock < 0) {
-        perror("Could not open a socket");
+    serverSock = socket(AF_INET, SOCK_STREAM, 0);   // Open up a socket
+    if (serverSock < 0) {                   // If errored
+        perror("Could not open a socket");  //   Print error message and exit
         exit(1);
     }
     
-    bzero((char *) &serv_addr, sizeof(serv_addr));
+    bzero((char *) &serverAddr, sizeof(serverAddr)); // Initialize serverAddr
     
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port = htons(portno);
+    serverAddr.sin_family = AF_INET;            // Set address as IPv4
+    serverAddr.sin_addr.s_addr = INADDR_ANY;    // Accept from any address
+    serverAddr.sin_port = htons(portno);        // Set port number
     
-    if (bind(serverSock, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
-        perror("Could not bind to port");
-        exit(1);
+    if (bind(                                   // If binding...
+            serverSock,                         // ... the open socket...
+            (struct sockaddr *) &serverAddr,    // ... to the server addr...
+            sizeof(serverAddr)                  // (size of server address)
+    ) < 0 ) {                                   // ... fails, then
+        perror("Could not bind to port");       //   Print error message...
+        exit(1);                                //   ... and exit
     }
     
-    listen(serverSock,5);
-    printf("Server started on port %d\n", portno);
+    listen(serverSock,5);   // Start listening to the open socket (success!)
+    std::cout << "[#0][S] HTTP Server started on port " << portno
+            << " and root dir '" << webroot << "'\n";
+            // Print info with port and root directory
     
     while (1) {
-        clilen = sizeof(cli_addr);
-        cliSock = accept(serverSock, (struct sockaddr *) &cli_addr, &clilen);
+        clilen = sizeof(clientAddr);
+        cliSock = accept(serverSock, (struct sockaddr *) &clientAddr, &clilen);
         
-        if (cliSock < 0) {
-            perror("Connection errored");       //     Let console know
-            close(cliSock);                     //     Close connection
-            continue;                           //     Next connection
+        if (cliSock < 0) {                              // If socket errors
+            perror("[#0][ERROR] Incoming connection");  //   Let console know
+            close(cliSock);                             //   Close connection
+            continue;                                   //   Next connection
         }
         
-        clientProcess();
+        clientProcess();    // If successful, create a new child process to
+                            //   handle server operations.
     }
-    close(serverSock);
-    return 0;
+    
+    // (Just in case code reaches this far)
+    close(serverSock);  // Close socket
+    exit(0);            // and exit
 }
