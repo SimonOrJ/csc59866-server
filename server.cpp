@@ -47,10 +47,10 @@ char *http_time(time_t rt) {
 
 // Time parser from HTTP header
 time_t http_time_parse(const char* time) {
-    std::cout << time << std::endl;
     struct tm tmv;
     memset(&tmv, 0, sizeof(struct tm));
     strptime(time, timeFormat, &tmv);
+    std::cout << http_time(mktime(&tmv)) << std::endl;
     return mktime(&tmv);
 }
 
@@ -246,7 +246,6 @@ void http_respond() {
         timecmp = difftime(climod, webfile_stat.st_mtime);
     }
     
-    std::cout << modsince.c_str() << std::endl;
     std::cout << "Time comparison: " << http_time_parse(modsince.c_str()) << ' ' << webfile_stat.st_mtime << ' ' << timecmp << std::endl;
     
     if (timecmp >= 0) send_http(304);
@@ -318,6 +317,8 @@ int main(int argc, char *argv[]) {
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
     
+    setenv("TZ", "GMT", 1); // Set timezone to GMT
+
     if (argc > 1) {
         portno = atoi(argv[1]);
     } else {
