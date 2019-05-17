@@ -1,7 +1,13 @@
-// Code by JinWon Chung
-// Usage: [port] [path]
-
-// TODO: Fix memory leak
+/* CSC59866
+ * Group1
+ * - JinWon Chung
+ * - Charlie Ding
+ * - Yuxuan Zhao
+ * Group 6
+ * - Gong Qi Chen
+ *
+ * Program parameters: [port = 8080] [root = html]
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
