@@ -119,7 +119,7 @@ void http_body() {
         } else {
             lenw = 0;
         }
-        printf("Sent: %lu\n", len);
+        printf("Sent: %u\n", len);
     } while (lenw != -1 && len > 0);
     
     if (lenw == -1) {
