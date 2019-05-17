@@ -36,6 +36,7 @@ char buffer[MAX_BUFFER_LENGTH];
 FILE *webfile;
 struct stat webfile_stat;
 int cliSock;
+int httpClientContinue;
 
 // Time creater for HTTP headers
 char *http_time(time_t rt) {
@@ -157,6 +158,7 @@ void send_http(int code) {
             webfile = fopen("400.html", "r");
             strcpy(buffer, "HTTP/1.1 400 Bad Request\r\n");
             http_send(1);
+            httpClientContinue = 0;
             break;
         case 404:
             file_path = "404.html";
@@ -223,14 +225,6 @@ void http_respond() {
     
     stat(path.c_str(), &webfile_stat);
 
-/*    
-    std::cout << "\nPrinting the contents of http_headers:\n";
-    for(std::map<std::string, std::string>::const_iterator it = http_headers.begin(); it != http_headers.end(); ++it) {
-        std::cout << it->first << " " << it->second << "\n";
-    }
-    std::cout << "End http_headers\n";
-*/
-
     std::string modsince = http_headers["If-Modified-Since"];
     std::cout << modsince << std::endl;
     bool notmod;
@@ -248,13 +242,52 @@ void http_respond() {
         fclose(webfile);
 }
 
+void httpClientAccept() {
+    std::string header;
+    int n;
+    
+    while (httpClientContinue) {
+        // Read header
+        bzero(buffer,MAX_BUFFER_LENGTH);
+        n = read(cliSock, buffer, MAX_BUFFER_LENGTH);
+        if (n < 0) {
+            perror("Couldn't read socket!");
+            close(cliSock);                        //     Close connection
+            return;
+        }
+        
+        header = buffer;
+        
+        while (header.find("\r\n\r\n") == std::string::npos) {
+            bzero(buffer,MAX_BUFFER_LENGTH);
+            read(cliSock, buffer, MAX_BUFFER_LENGTH);
+            header.append(buffer);
+        }
+        
+        std::cout << " ### Client Request ###\n" << header << std::endl;
+        
+        // Parse incoming header
+        header_parse(header);
+        
+        if (httpClientContinue == 0)
+            break;
+        
+        if (file_path == "/") file_path = "/index.html";
+        
+        // Send data based on header
+        printf(" ### Server Response ###\n");
+        http_respond();
+    }
+    
+    printf("Socket Closing\n");
+    close(cliSock);
+}
+
 // Main Stuff
 int main(int argc, char *argv[]) {
-    std::string header;
     int serverSock, portno;
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
-    int n;
     
     if (argc > 1) {
         portno = atoi(argv[1]);
@@ -300,37 +333,8 @@ int main(int argc, char *argv[]) {
             continue;                           //     Next connection
         }
         
-        // Read header
-        bzero(buffer,MAX_BUFFER_LENGTH);
-        n = read(cliSock, buffer, MAX_BUFFER_LENGTH);
-        if (n < 0) {
-            perror("Couldn't read socket!");
-            close(cliSock);                        //     Close connection
-            continue;
-        }
-        
-        header = buffer;
-        
-        while (header.find("\r\n\r\n") == std::string::npos) {
-            bzero(buffer,MAX_BUFFER_LENGTH);
-            read(cliSock, buffer, MAX_BUFFER_LENGTH);
-            header.append(buffer);
-        }
-        
-        std::cout << " ### Client Request ###\n" << header << std::endl;
-        
-        // Parse incoming header
-        header_parse(header);
-        
-        if (file_path == "/") file_path = "/index.html";
-        
-        // Send data based on header
-        printf(" ### Server Response ###\n");
-        http_respond();
-        
-        printf("Socket Closing\n");
-        
-        close(cliSock);
+        httpClientContinue = 1;
+        httpClientAccept();
     }
     close(serverSock);
     return 0; 
