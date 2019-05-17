@@ -145,7 +145,7 @@ void appendBodyInfo() {
 }
 
 /**
- * Sending a file through body
+ * Send a file through body
  * This is not called if HEAD method is used.
  * This is not called when content length is 0.
  */
@@ -174,7 +174,7 @@ void sendBody() {
 }
 
 /**
- * HTTP Response Sender
+ * HTTP response sender
  * This function is in charge of sending a response to the HTTP request.
  * @param hasBody A flag if this should also send the body of the response.
  */
@@ -201,191 +201,258 @@ void sendHttpResponse(int hasBody) {
 }
 
 /**
- * HTTP Response Preparer
- * This function prepares HTTP respond with proper header.
- * @param code HTTP code (200, 304, 400, 404)
+ * Error file preparer
+ * Used only when request results in an error. (400, 404, 501)
+ * @param file Error file path
  */
-void httpRespond(int code) {
-    printf("[#%d] -> Sending server response\n", connId);
-    
-    switch (code) {
-        case 200:
-            strcpy(buffer, "HTTP/1.1 200 OK\r\n");
-            // Add Last-Modified header
-            strcat(buffer, "Last-Modified: ");
-            strcat(buffer, httpDateTime(webFileStat.st_mtime));
-            strcat(buffer, "\r\nCache-Control: public, max-age=86400\r\n");
-            sendHttpResponse(1);
-            break;
-        case 304:
-            strcpy(buffer, "HTTP/1.1 304 Not Modified\r\n");
-            sendHttpResponse(0);
-            break;
-        case 400:
-            file_path = "400.html";
-            webFile = fopen("400.html", "r");
-            strcpy(buffer, "HTTP/1.1 400 Bad Request\r\n");
-            sendHttpResponse(1);
-            break;
-        case 404:
-            file_path = "404.html";
-            webFile = fopen("404.html", "r");
-            strcpy(buffer, "HTTP/1.1 404 Not Found\r\n");
-            sendHttpResponse(1);
-            break;
-        default:
-            file_path = "501.html";
-            webFile = fopen("501.html", "r");
-            strcpy(buffer, "HTTP/1.1 501 Not Implemented\r\n");
-            sendHttpResponse(1);
-            break;
-    }
-    printf("[#%d] >| Sending finished\n", connId);
+void openErrorFile(const char *file) {
+    file_path = file;
+    webFile = fopen(file, "r");
 }
 
-void http_receive(std::string head) {
-    printf("[#%d] <- Received client request\n", connId);
-    std::cout << head << std::endl;
+/**
+ * HTTP response preparer
+ * This function prepares HTTP respond with proper header.
+ * @param code HTTP code (200, 304, 400, 404, 501)
+ */
+void httpCode(int code) {
+    printf("[#%d] -> Sending server response\n", connId);   // Print intent
     
-    http_headers.clear();
+    switch (code) { // Switch based on code
+        case 200:   // 200 OK
+            strcpy(buffer, "HTTP/1.1 200 OK\r\n");              // Header
+            
+            strcat(buffer, "Last-Modified: ");  // Add Last-Modified header
+            strcat(buffer, httpDateTime(webFileStat.st_mtime)); 
+                                    // Add date of when file was last modified
+            
+            strcat(buffer, "\r\nCache-Control: public, max-age=86400\r\n");
+                                    // Make browser cache file for 1 hour
+            sendHttpResponse(1);    // Send response with body
+            break;
+            
+        case 304:   // 304 Not Modified
+            strcpy(buffer, "HTTP/1.1 304 Not Modified\r\n");    // Header
+            sendHttpResponse(0);    // Send response without body
+            break;
+            
+        case 400:   // 400 Bad Request
+            openErrorFile("400.html");  // Prepare 400.html
+            strcpy(buffer, "HTTP/1.1 400 Bad Request\r\n");     // Header
+            sendHttpResponse(1);    // Send response with body
+            break;
+            
+        case 404:   // 404 Not Found
+            openErrorFile("404.html");  // Prepare 404.html
+            strcpy(buffer, "HTTP/1.1 404 Not Found\r\n");       // Header
+            sendHttpResponse(1);    // Send response with body
+            break;
+            
+        case 501:   // 501 Not Implemented
+        default:    // ... and all other cases
+            openErrorFile("501.html");  // Prepare 501.html
+            strcpy(buffer, "HTTP/1.1 501 Not Implemented\r\n"); // Header
+            sendHttpResponse(1);    // Send response with body
+    }
+    
+    printf("[#%d] >| Sending finished\n", connId);  // Print message on finish
+}
+
+/**
+ * HTTP bad request preparer
+ * If an HTTP request results in a bad request, this should be run.
+ */
+void handleBadRequest() {
+        keepAlive = 0;      // If not: break connection
+        resErr = 1;         // Raise error flag
+        httpCode(400);      // Respond with 400 Bad Request
+}
+
+/**
+ * HTTP request header parser
+ * This function reads headers and parses them into global variables.
+ * Variables affected: [http_method, file_path, http_headers]
+ */
+void parseHeaders(std::string head) {
+    size_t pos1 = 0, pos2, posn;    // Declare position trackers
+    std::string key, val;           // Declare key-value pair
+    
+    printf("[#%d] <- Request received; parsing headers\n", connId);
+                                    // Print intent
+    std::cout << head << std::endl; // Print current headers
+    
+    http_headers.clear();           // Clear map to handle new headers
+    
+    // Find line break position first
+    posn = head.find("\r\n", pos1);
     
     // Method
-    size_t pos1 = 0, pos2;
-    pos2 = head.find(' ', pos1);
-    http_method = head.substr(pos1, pos2-pos1);
+    pos2 = head.find(' ', pos1);    // Find next blank space
+    if (pos2 > posn) {              // Make sure space is within line break
+        handleBadRequest();         //   Trigger bad request and exit
+        return;
+    }
+    http_method = head.substr(pos1, pos2-pos1); // Store method
+    // Note: Method is validated while gathering header buffer.
     
     // Path
-    pos1 = pos2 + 1;
-    pos2 = head.find(' ', pos1);
-    file_path = head.substr(pos1, pos2-pos1);
+    pos1 = pos2 + 1;                // Update pos1 tracker
+    pos2 = head.find(' ', pos1);    // Find next blank space
+    if (pos2 > posn) {              // Make sure space is within line break
+        handleBadRequest();         //   Trigger bad request and exit
+        return;
+    }
+    file_path = head.substr(pos1, pos2-pos1);   // Store path
     
     // HTTP Version
-    pos1 = pos2 + 1;
-    pos2 = head.find("\r\n", pos1);
-    head.substr(pos1, pos2-pos1);
-    if (head.find("HTTP/", pos1) != pos1) {
-        keepAlive = 0;
-        resErr = 1;
-        httpRespond(400);
+    pos1 = pos2 + 1;                // Update pos1 tracker
+    pos2 = head.find("\r\n", pos1); // Set end to line break
+    if (head.find("HTTP/", pos1) != pos1) {// Check if this position is "HTTP/"
+        handleBadRequest();         //   Trigger bad request and exit
         return;
     }
     
     // Rest of the header
-    pos1 = pos2 + 2;
-    std::string key, val;
+    pos1 = pos2 + 2;                // Update pos1 tracker
     while (1) {
-        pos2 = head.find(": ", pos1);
-        key = head.substr(pos1, pos2-pos1);
-        pos1 = pos2 + 2;
+        posn = head.find("\r\n", pos1);     // Find end of line
         
-        pos2 = head.find("\r\n", pos1);
-        val = head.substr(pos1, pos2-pos1);
-        pos1 = pos2 + 2;
+        pos2 = head.find(": ", pos1);       // Find key-value separator
+        if (pos2 > posn) {              // Make sure colon is within line break
+            handleBadRequest();             //   Trigger bad request and exit
+            return;
+        }
+        key = head.substr(pos1, pos2-pos1); // This is the key
+        pos1 = pos2 + 2;                    // Update pos1 tracker
         
-        http_headers[key] = val;
-        if (head.substr(pos1, 2) == "\r\n")
-            break;
+        pos2 = head.find("\r\n", pos1);     // Find end of line
+        val = head.substr(pos1, pos2-pos1); // This is the value
+        pos1 = pos2 + 2;                    // Update pos1 tracker
+        
+        http_headers[key] = val;            // Put key-value pair in the map
+        if (head.substr(pos1, 2) == "\r\n") // Check if there's another \n
+            break;                          // Stop looping
     }
-    printf("[#%d] |< Request parsing finished\n", connId);
+    
+    printf("[#%d] |< Request parsing finished\n", connId);  // Print on finish
 }
 
-void http_respond() {
-    bzero(buffer,MAX_BUFFER_LENGTH);
-    std::string path(webroot + file_path);
-    webFile = fopen(path.c_str(), "r");
-    std::string connection = http_headers["Connection"];
-    std::string modsince = http_headers["If-Modified-Since"];
+/**
+ * HTTP Responder
+ * Responds to the HTTP request
+ */
+void sendHTTPResponse() {
+    std::string path(webroot + file_path),              // Setup file path
+        connection = http_headers["Connection"],        // Get Conn header
+        modsince = http_headers["If-Modified-Since"];   // Get IMS header
+    bzero(buffer,MAX_BUFFER_LENGTH);    // Zero out the buffer
+    webFile = fopen(path.c_str(), "r"); // Open file from path
+    double timecmp;                     // Time comparison
     
-    if (connection.empty()) {
-        keepAlive = 0;
+    if (connection.empty()) {   // If Connection header is not defined
+        keepAlive = 0;          // Don't keep the connection alive
     } else {
         if (connection.find("keep-alive") != std::string::npos
-            || connection.find("Keep-Alive") != std::string::npos)
-            keepAlive = 1;
+            || connection.find("Keep-Alive") != std::string::npos
+        )                   // if Connection = keep-alive
+            keepAlive = 1;  // Keep alive
         else
-            keepAlive = 0;
+            keepAlive = 0;  // don't keep alive (disconnect on complete)
     }
     
-    if (webFile == NULL) {
-        httpRespond(404);
-        return;
+    if (webFile == NULL) {  // If file is not found
+        httpCode(404);      // Send HTTP 404
+        return;             // ... and exit
     }
     
-    stat(path.c_str(), &webFileStat);
+    stat(path.c_str(), &webFileStat);   // Get file information/stats
 
-    double timecmp;
-    if (modsince.empty()) {
-        timecmp = -1;
+    if (modsince.empty()) { // If IMS header is not defined
+        timecmp = -1;       // *Force HTTP code 200*
     } else {
-        time_t climod = parseHttpDateTime(modsince.c_str());
-        timecmp = difftime(climod, webFileStat.st_mtime);
+        time_t climod = parseHttpDateTime(modsince.c_str());    // Parse IMS
+        timecmp = difftime(climod, webFileStat.st_mtime);   // Check difference
     }
     
-    if (timecmp >= 0) httpRespond(304);
-    else httpRespond(200);
+    if (timecmp >= 0) httpCode(304);// Send HTTP 304 if webFile is unchanged
+    else httpCode(200);             // Send HTTP 200 if webFile is newer
     
-    if (webFile != NULL)
-        fclose(webFile);
+    if (webFile != NULL) fclose(webFile);   // Make sure to close file
 }
 
-void httpClientAccept() {
-    std::string header;
-    int n;
+/**
+ * Client Process
+ * Create a new process here so the server can accept more connections while
+ * waiting on existing connections to complete and send data through read().
+ */
+void clientProcess() {
+    connId++;           // Increment connection
+    if (fork() != 0)    // Fork into a new process
+        return;         // If parent, exit out of the function
+
+    std::string header; // Header mega-string
+    int n;              // Read tracker
     
-    printf("[#%d][N] ### New Client Connection ###\n", connId);
+    printf("[#%d][N] ### New Client Connection ###\n", connId); // Print info
     
-    keepAlive = 1;
-    resErr = 0;
-    while (keepAlive && resErr == 0) {
+    keepAlive = 1;  // Set variables to start and...
+    resErr = 0;     // ... get into the while loop
+    while (keepAlive && resErr == 0) {      // Start loop
+        bzero(buffer,MAX_BUFFER_LENGTH);    // Zero out the buffer
+        
         // Read header
-        bzero(buffer,MAX_BUFFER_LENGTH);
-        n = read(cliSock, buffer, MAX_BUFFER_LENGTH);
-        if (n < 0) {
-            perror("Couldn't read socket!");
+        n = read(cliSock, buffer, MAX_BUFFER_LENGTH);   // Read into buffer
+        if (n < 0) {                            // If there was an error
+            perror("Couldn't read socket!");    //   Print error and exit
             break;
-        } else if (n == 0) {
-            break;
+        } else if (n == 0) {                    // If nothing was read
+            break;                              //   Exit
         } else if (strcmp(buffer, "\r\n") == 0) {
-            continue;
+            continue;           // Restart loop If only line break was sent
         }
         
-        header = buffer;
-        if (
-                header.find(" /", 3) == std::string::npos
+        header = buffer;        // Turn initial buffer into string
+        
+        // Validate first line
+        if (header.find(" /", 3) == std::string::npos
                 || header.find(" HTTP/", 5) == std::string::npos
-        ) {
-            keepAlive = 0;
-            httpRespond(400);
-            break;
+        ) {         // If path and/or "HTTP/1.1" is missing from the request
+            keepAlive = 0;  //   Don't repeat the loop
+            httpCode(400);  //   Send HTTP 400 Bad Request
+            break;          //   and exit
         }
         
+        // Validate method
         if (header.substr(0, 4) != "GET " && header.substr(0, 5) != "HEAD ") {
-            httpRespond(501);
-            break;
+                            // If the method is not GET or HEAD 
+            httpCode(501);  //   Send HTTP 501 Not Implemented
+            continue;       //   and restart loop
         }
         
+        // Receive rest of the header
         while (header.find("\r\n\r\n") == std::string::npos) {
-            bzero(buffer,MAX_BUFFER_LENGTH);
-            n = read(cliSock, buffer, MAX_BUFFER_LENGTH);
-            if (n < 0) {
-                perror("Couldn't read socket!");
+                            // Keep reading until there is double line breaks
+            bzero(buffer,MAX_BUFFER_LENGTH);                // Clear buffer
+            n = read(cliSock, buffer, MAX_BUFFER_LENGTH);   // Read into buffer
+            if (n < 0) {                            // If there was an error
+                perror("Couldn't read socket!");    //   Print error and exit
                 break;
-            } else if (n == 0) {
-                break;
+            } else if (n == 0) {                    // If nothing was read
+                break;                              //   Exit
             }
-            header.append(buffer);
+            header.append(buffer);  // Append buffer to header string
         }
         
         // Parse incoming header
-        http_receive(header);
+        parseHeaders(header);
         
-        if (resErr)
+        if (resErr) // If parseHeaders() resulted in an error
             break;
         
         if (file_path == "/") file_path = "/index.html";
         
         // Send data based on header
-        http_respond();
+        sendHTTPResponse();
     }
     
     shutdown(cliSock, SHUT_RDWR);
@@ -447,10 +514,7 @@ int main(int argc, char *argv[]) {
             continue;                           //     Next connection
         }
         
-        connId++;
-        if (fork() == 0) {
-            httpClientAccept();
-        }
+        clientProcess();
     }
     close(serverSock);
     return 0;
