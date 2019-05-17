@@ -7,7 +7,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
-#include <sys/types.h> 
 #include <sys/stat.h> 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -35,7 +34,7 @@ char buffer[MAX_BUFFER_LENGTH];
 
 FILE *webfile;
 struct stat webfile_stat;
-int cliSock;
+int cliSock, connId = 0;
 int keepAlive, resErr;
 
 // Time creater for HTTP headers
@@ -50,7 +49,6 @@ time_t http_time_parse(const char* time) {
     struct tm tmv;
     memset(&tmv, 0, sizeof(struct tm));
     strptime(time, timeFormat, &tmv);
-    std::cout << http_time(mktime(&tmv)) << std::endl;
     return mktime(&tmv);
 }
 
@@ -119,13 +117,13 @@ void http_body() {
         } else {
             lenw = 0;
         }
-        printf("Sent: %u\n", len);
+        printf("  Sent: %u\n", len);
     } while (lenw != -1 && len > 0);
     
     if (lenw == -1) {
         perror("Could not complete file copy");
     } else {
-        std::cout << "... Sent!\n\n";
+        std::cout << "... Done!\n";
     }
 }
 
@@ -142,7 +140,8 @@ void http_send(int content) {
 }
 
 void send_http(int code) {
-    printf(" ### Server Response ###\n");
+    printf("[#%d] -> Sending server response\n", connId);
+    
     switch (code) {
         case 200:
             strcpy(buffer, "HTTP/1.1 200 OK\r\n");
@@ -170,9 +169,13 @@ void send_http(int code) {
             break;
         
     }
+    printf("[#%d] >| Sending finished\n", connId);
 }
 
-void header_parse(std::string head) {
+void http_receive(std::string head) {
+    printf("[#%d] <- Received client request\n", connId);
+    std::cout << head << std::endl;
+    
     http_headers.clear();
     
     // Method
@@ -212,6 +215,7 @@ void header_parse(std::string head) {
         if (head.substr(pos1, 2) == "\r\n")
             break;
     }
+    printf("[#%d] |< Request parsing finished\n", connId);
 }
 
 void http_respond() {
@@ -246,8 +250,6 @@ void http_respond() {
         timecmp = difftime(climod, webfile_stat.st_mtime);
     }
     
-    std::cout << "Time comparison: " << http_time_parse(modsince.c_str()) << ' ' << webfile_stat.st_mtime << ' ' << timecmp << std::endl;
-    
     if (timecmp >= 0) send_http(304);
     else send_http(200);
     
@@ -258,6 +260,8 @@ void http_respond() {
 void httpClientAccept() {
     std::string header;
     int n;
+    
+    printf("[#%d][N] ### New Client Connection ###\n", connId);
     
     keepAlive = 1;
     resErr = 0;
@@ -293,10 +297,8 @@ void httpClientAccept() {
             header.append(buffer);
         }
         
-        std::cout << " ### Client Request ###\n" << header << std::endl;
-        
         // Parse incoming header
-        header_parse(header);
+        http_receive(header);
         
         if (resErr)
             break;
@@ -307,8 +309,11 @@ void httpClientAccept() {
         http_respond();
     }
     
-    printf("Socket Closing\n");
+    shutdown(cliSock, SHUT_RDWR);
     close(cliSock);
+    printf("[#%d][X] ### Connection Closed ###\n", connId);
+    
+    exit(0);
 }
 
 // Main Stuff
@@ -363,7 +368,10 @@ int main(int argc, char *argv[]) {
             continue;                           //     Next connection
         }
         
-        httpClientAccept();
+        connId++;
+        if (fork() == 0) {
+            httpClientAccept();
+        }
     }
     close(serverSock);
     return 0;
