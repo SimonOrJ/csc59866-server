@@ -1,4 +1,5 @@
-/* CSC59866
+/*
+ * CSC59866
  * Group1
  * - JinWon Chung
  * - Charlie Ding
@@ -232,6 +233,16 @@ void httpCode(int code) {
             sendHttpResponse(1);    // Send response with body
             break;
             
+        case 301:   // 301 Moved Permanently
+                    //   This is similar to 302 (but is NOT the same)
+        case 302:   // 302 Found
+            strcpy(buffer, "HTTP/1.1 302 Found\r\n");    // Header
+            strcat(buffer, "Location: ");
+            strcat(buffer, filePath.c_str());
+            strcat(buffer, "\r\n");
+            sendHttpResponse(0);    // Send response without body
+            break;
+            
         case 304:   // 304 Not Modified
             strcpy(buffer, "HTTP/1.1 304 Not Modified\r\n");    // Header
             sendHttpResponse(0);    // Send response without body
@@ -362,11 +373,16 @@ void sendHTTPResponse() {
     }
     
     if (webFile == NULL) {  // If file is not found
-        httpCode(404);      // Send HTTP 404
-        return;             // ... and exit
+        httpCode(404);      // Send HTTP 404 then exit
+        return;
     }
     
     stat(path.c_str(), &webFileStat);   // Get file information/stats
+    if (webFileStat.st_mode & S_IFDIR) {// If "file" is directory
+        filePath.push_back('/');    // Add '/' to path
+        httpCode(302);              // Send 302 Found then exit
+        return;
+    }
 
     if (modsince.empty()) { // If IMS header is not defined
         timecmp = -1;       // *Force HTTP code 200*
@@ -450,7 +466,7 @@ void clientProcess() {
         if (resErr)             // If parseHeaders() resulted in an error
             break;              //   ... then exit out
         
-        if (filePath.at(filePath.length()-1) == '/')         // If path ends with '/'
+        if (filePath.at(filePath.length()-1) == '/')// If path ends with '/'
             filePath.append("index.html");  // Look for index.html file
         
         sendHTTPResponse(); // Send response based on header
