@@ -282,16 +282,6 @@ void httpCode(int code) {
 }
 
 /**
- * HTTP bad request preparer
- * If an HTTP request results in a 400 bad request, this should be run.
- */
-void handleBadRequest() {
-        keepAlive = 0;  // If not: break connection
-        resErr = 1;     // Raise error flag
-        httpCode(400);  // Respond with 400 Bad Request
-}
-
-/**
  * HTTP Responder
  * Responds to the HTTP request
  */
@@ -343,6 +333,16 @@ void sendHTTPResponse() {
 /* ######################################################################### *
  *          This function is in charge of parsing the client input           *
  * ######################################################################### */
+
+/**
+ * HTTP bad request preparer (used by parseHeaders())
+ * If an HTTP request results in a 400 bad request, this should be run.
+ */
+void handleBadRequest() {
+    keepAlive = 0;  // If not: break connection
+    resErr = 1;     // Raise error flag
+    httpCode(400);  // Respond with 400 Bad Request
+}
 
 /**
  * HTTP request header parser
