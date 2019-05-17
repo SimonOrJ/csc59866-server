@@ -55,7 +55,9 @@ Accept-Ranges: bytes\r\n\
 Content-Length: %ld\r\n\
 ";
 
-// Global variables
+/*
+ * Global variables
+ */
 std::map<std::string, std::string> httpHeaders; // Header storage map
 std::string httpMethod, filePath, webroot;      // Global strings
 const unsigned int MAX_BUFFER_LENGTH = 4096;    // Max buffer length
@@ -65,9 +67,16 @@ int cliSock,                    // Socket
     keepAlive,                  // keep-alive flag
     resErr;                     // Header parsing error flag 
 
-// Global file-based variables
+/*
+ * Global file-based variables
+ */
 FILE *webFile;              // File pointer for reading                    
 struct stat webFileStat;    // File statistics for dates
+
+
+/* ######################################################################### *
+ *          These functions are in charge of replying to the client          *
+ * ######################################################################### */
 
 /**
  * Unix time to HTTP format builder
@@ -94,6 +103,8 @@ time_t parseHttpDateTime(const char* time) {
 
 /**
  * Header appender for response with body
+ * This is used by sendHttpResponse() function.
+ * This appends headers with information for body to the buffer.
  * This is not called if HEAD method is used.
  * This is not called when HTTP response is 304.
  */
@@ -146,7 +157,8 @@ void appendBodyInfo() {
 }
 
 /**
- * Send a file through body
+ * Send a file
+ * This uses buffer to gather and send data in chunks.
  * This is not called if HEAD method is used.
  * This is not called when content length is 0.
  */
@@ -177,6 +189,7 @@ void sendBody() {
 
 /**
  * HTTP response sender
+ * This is used by httpCode() function.
  * This function is in charge of sending a response to the HTTP request.
  * @param hasBody A flag if this should also send the body of the response.
  */
@@ -223,11 +236,9 @@ void httpCode(int code) {
     switch (code) { // Switch based on code
         case 200:   // 200 OK
             strcpy(buffer, "HTTP/1.1 200 OK\r\n");              // Header
-            
             strcat(buffer, "Last-Modified: ");  // Add Last-Modified header
             strcat(buffer, httpDateTime(webFileStat.st_mtime)); 
                                     // Add date of when file was last modified
-            
             strcat(buffer, "\r\nCache-Control: public, max-age=86400\r\n");
                                     // Make browser cache file for 1 hour
             sendHttpResponse(1);    // Send response with body
@@ -237,9 +248,9 @@ void httpCode(int code) {
                     //   This is similar to 302 (but is NOT the same)
         case 302:   // 302 Found
             strcpy(buffer, "HTTP/1.1 302 Found\r\n");    // Header
-            strcat(buffer, "Location: ");
-            strcat(buffer, filePath.c_str());
-            strcat(buffer, "\r\n");
+            strcat(buffer, "Location: ");       // Set location header
+            strcat(buffer, filePath.c_str());   // Set file position
+            strcat(buffer, "\r\n");             // Line break
             sendHttpResponse(0);    // Send response without body
             break;
             
@@ -272,13 +283,66 @@ void httpCode(int code) {
 
 /**
  * HTTP bad request preparer
- * If an HTTP request results in a bad request, this should be run.
+ * If an HTTP request results in a 400 bad request, this should be run.
  */
 void handleBadRequest() {
         keepAlive = 0;  // If not: break connection
         resErr = 1;     // Raise error flag
         httpCode(400);  // Respond with 400 Bad Request
 }
+
+/**
+ * HTTP Responder
+ * Responds to the HTTP request
+ */
+void sendHTTPResponse() {
+    std::string path(webroot + filePath),              // Setup file path
+        connection = httpHeaders["Connection"],        // Get Conn header
+        modsince = httpHeaders["If-Modified-Since"];   // Get IMS header
+    bzero(buffer,MAX_BUFFER_LENGTH);    // Zero out the buffer
+    webFile = fopen(path.c_str(), "r"); // Open file from path
+    double timecmp;                     // Time comparison
+    
+    if (connection.empty()) {   // If Connection header is not defined
+        keepAlive = 0;          // Don't keep the connection alive
+    } else {
+        if (connection.find("keep-alive") != std::string::npos
+            || connection.find("Keep-Alive") != std::string::npos
+        )                   // if Connection = keep-alive
+            keepAlive = 1;  // Keep alive
+        else
+            keepAlive = 0;  // don't keep alive (disconnect on complete)
+    }
+    
+    if (webFile == NULL) {  // If file is not found
+        httpCode(404);      // Send HTTP 404 then exit
+        return;
+    }
+    
+    stat(path.c_str(), &webFileStat);   // Get file information/stats
+    if (webFileStat.st_mode & S_IFDIR) {// If "file" is directory
+        filePath.push_back('/');    // Add '/' to path
+        httpCode(302);              // Send 302 Found then exit
+        return;
+    }
+
+    if (modsince.empty()) { // If IMS header is not defined
+        timecmp = -1;       // *Force HTTP code 200*
+    } else {
+        time_t climod = parseHttpDateTime(modsince.c_str());// Parse IMS
+        timecmp = difftime(climod, webFileStat.st_mtime);   // Check difference
+    }
+    
+    if (timecmp >= 0) httpCode(304);// Send HTTP 304 if webFile is unchanged
+    else httpCode(200);             // Send HTTP 200 if webFile is newer
+    
+    if (webFile != NULL) fclose(webFile);   // Make sure to close file
+}
+
+
+/* ######################################################################### *
+ *          This function is in charge of parsing the client input           *
+ * ######################################################################### */
 
 /**
  * HTTP request header parser
@@ -349,53 +413,10 @@ void parseHeaders(std::string head) {
     printf("[#%d] |< Request parsing finished\n", connId);  // Print on finish
 }
 
-/**
- * HTTP Responder
- * Responds to the HTTP request
- */
-void sendHTTPResponse() {
-    std::string path(webroot + filePath),              // Setup file path
-        connection = httpHeaders["Connection"],        // Get Conn header
-        modsince = httpHeaders["If-Modified-Since"];   // Get IMS header
-    bzero(buffer,MAX_BUFFER_LENGTH);    // Zero out the buffer
-    webFile = fopen(path.c_str(), "r"); // Open file from path
-    double timecmp;                     // Time comparison
-    
-    if (connection.empty()) {   // If Connection header is not defined
-        keepAlive = 0;          // Don't keep the connection alive
-    } else {
-        if (connection.find("keep-alive") != std::string::npos
-            || connection.find("Keep-Alive") != std::string::npos
-        )                   // if Connection = keep-alive
-            keepAlive = 1;  // Keep alive
-        else
-            keepAlive = 0;  // don't keep alive (disconnect on complete)
-    }
-    
-    if (webFile == NULL) {  // If file is not found
-        httpCode(404);      // Send HTTP 404 then exit
-        return;
-    }
-    
-    stat(path.c_str(), &webFileStat);   // Get file information/stats
-    if (webFileStat.st_mode & S_IFDIR) {// If "file" is directory
-        filePath.push_back('/');    // Add '/' to path
-        httpCode(302);              // Send 302 Found then exit
-        return;
-    }
 
-    if (modsince.empty()) { // If IMS header is not defined
-        timecmp = -1;       // *Force HTTP code 200*
-    } else {
-        time_t climod = parseHttpDateTime(modsince.c_str());// Parse IMS
-        timecmp = difftime(climod, webFileStat.st_mtime);   // Check difference
-    }
-    
-    if (timecmp >= 0) httpCode(304);// Send HTTP 304 if webFile is unchanged
-    else httpCode(200);             // Send HTTP 200 if webFile is newer
-    
-    if (webFile != NULL) fclose(webFile);   // Make sure to close file
-}
+/* ######################################################################### *
+ *            These functions are in charge of accepting clients             *
+ * ######################################################################### */
 
 /**
  * Client Process
@@ -479,13 +500,21 @@ void clientProcess() {
     exit(0);    // Exit the child process
 }
 
-// Main Stuff
+/**
+ * Main
+ * The arguments taken are
+ *   0. Program name
+ *   1. Port number
+ *   2. Web root path
+ * @param argc Argument count (including the program name itself)
+ * @param argv Arguments (with size of argc)
+ */
 int main(int argc, char *argv[]) {
     int serverSock, portno;                     // Socket and port
     socklen_t clilen;                           // Socket length
     struct sockaddr_in serverAddr, clientAddr;  // Socket address info
     
-    setenv("TZ", "GMT", 1); // Set timezone to GMT (for HTTP dates)
+    setenv("TZ", "GMT", 1);     // Set timezone to GMT (for HTTP dates)
 
     if (argc > 1) {             // If there's some parameters
         portno = atoi(argv[1]); //   Interpret first parameter as port
@@ -540,7 +569,6 @@ int main(int argc, char *argv[]) {
                             //   handle server operations.
     }
     
-    // (Just in case code reaches this far)
     close(serverSock);  // Close socket
     exit(0);            // and exit
 }
