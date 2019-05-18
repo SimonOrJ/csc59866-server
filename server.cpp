@@ -177,7 +177,7 @@ void sendBody() {
             slen = 0;   // Default if there was nothing to write.
         }
         printf("  Sent: %u\n", len);        // Print bytes sent
-    } while (slen != -1 && len == slen);    // Keep looping if no error or
+    } while (slen > 0 && len == slen);      // Keep looping if no error or
                                             //   there is more data to send.
     if (slen == -1) {                       // If there was a write error
         printf("[#%d][ERROR] ", connId);    //   Print client ID
