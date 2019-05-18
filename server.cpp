@@ -103,7 +103,7 @@ time_t parseHttpDateTime(const char* time) {
 
 /**
  * Header appender for response with body
- * This is used by sendHttpResponse() function.
+ * This is used by writeToClient() function.
  * This appends headers with information for body to the buffer.
  * This is not called if HEAD method is used.
  * This is not called when HTTP response is 304.
@@ -193,7 +193,7 @@ void sendBody() {
  * This function is in charge of sending a response to the HTTP request.
  * @param hasBody A flag if this should also send the body of the response.
  */
-void sendHttpResponse(int hasBody) {
+void writeToClient(int hasBody) {
     time_t rt;  // Unix time
     time(&rt);  // Get current time
     
@@ -241,7 +241,7 @@ void httpCode(int code) {
                                     // Add date of when file was last modified
             strcat(buffer, "\r\nCache-Control: public, max-age=86400\r\n");
                                     // Make browser cache file for 1 hour
-            sendHttpResponse(1);    // Send response with body
+            writeToClient(1);   // Send response with body
             break;
             
         case 301:   // 301 Moved Permanently
@@ -251,31 +251,31 @@ void httpCode(int code) {
             strcat(buffer, "Location: ");       // Set location header
             strcat(buffer, filePath.c_str());   // Set file position
             strcat(buffer, "\r\n");             // Line break
-            sendHttpResponse(0);    // Send response without body
+            writeToClient(0);   // Send response without body
             break;
             
         case 304:   // 304 Not Modified
             strcpy(buffer, "HTTP/1.1 304 Not Modified\r\n");    // Header
-            sendHttpResponse(0);    // Send response without body
+            writeToClient(0);   // Send response without body
             break;
             
         case 400:   // 400 Bad Request
             openErrorFile("400.html");  // Prepare 400.html
             strcpy(buffer, "HTTP/1.1 400 Bad Request\r\n");     // Header
-            sendHttpResponse(1);    // Send response with body
+            writeToClient(1);   // Send response with body
             break;
             
         case 404:   // 404 Not Found
             openErrorFile("404.html");  // Prepare 404.html
             strcpy(buffer, "HTTP/1.1 404 Not Found\r\n");       // Header
-            sendHttpResponse(1);    // Send response with body
+            writeToClient(1);   // Send response with body
             break;
             
         case 501:   // 501 Not Implemented
         default:    // ... and all other cases
             openErrorFile("501.html");  // Prepare 501.html
             strcpy(buffer, "HTTP/1.1 501 Not Implemented\r\n"); // Header
-            sendHttpResponse(1);    // Send response with body
+            writeToClient(1);   // Send response with body
     }
     
     printf("[#%d] >| Sending finished\n", connId);  // Print message on finish
