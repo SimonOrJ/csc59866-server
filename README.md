@@ -11,13 +11,13 @@ This program was written for CSC 59866 class by group 1.
 Make sure the machine has gcc installed.  Then run:
 
 ```
-gcc server.cpp -lstdc++ -o server
+g++ server.cpp -o server
 ```
 
 
 ## Usage
 
-Usage: `./server [port=80] [root=html]`
+Usage: `./server [port=8080] [root=html]`
 
 To run the program with default configuration, run
 
