@@ -1,14 +1,14 @@
 HTTP Server Software
 ====================
 
-CSC 59866: Group 1
+CSC 59866: Group 1 & 6
 
-This program was written for CSC 59866 class by group 1.
+This program was written for CSC 59866 class by group 1 & 6.
 
 
 ## How to compile
 
-Make sure the machine has gcc installed.  Then run:
+Make sure the machine has gcc and g++ installed.  Then run:
 
 ```
 g++ server.cpp -o server
